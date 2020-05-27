@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # =============================================================================
@@ -70,6 +70,10 @@ import json
 from io import StringIO
 from multiprocessing import Queue, Process, Value, cpu_count
 from timeit import default_timer
+from jinja2 import Template
+
+# For wikireader output
+from jinja2 import Template
 
 
 PY2 = sys.version_info[0] == 2
@@ -98,6 +102,16 @@ else:
     from types import SimpleNamespace
     text_type = str
 
+
+# XML_TEMPLATE is used to write wikimedia xml-like output for the wikireader
+XML_TEMPLATE = Template('''
+  <page>
+    <title>{{ title }}</title>
+    <id>{{ id }}</id>
+    <revision>
+      <text bytes="{{ bytes }}" xml:space="preserve">{{ text }}</text>
+    </revision>
+  </page>''')
 
 # ===========================================================================
 
@@ -164,6 +178,10 @@ options = SimpleNamespace(
     write_json = False,
 
     ##
+    # Write output used by the wikireader
+    write_wikireader = False,
+
+    ##
     # Whether to expand templates
     expand_templates = True,
 
@@ -207,6 +225,10 @@ options = SimpleNamespace(
 ##
 # Keys for Template and Module namespaces
 templateKeys = set(['10', '828'])
+
+##
+# used to filter duplicate titles
+seen_titles = set()
 
 ##
 # Regex for identifying disambig pages
@@ -562,7 +584,19 @@ class Extractor(object):
         :param text: the text of the page
         """
         url = get_url(self.id)
-        if options.write_json:
+        if options.write_wikireader:
+            body = "\n".join(text)
+            out_str = XML_TEMPLATE.render(
+                id=self.id,
+                title=self.title,
+                bytes=len(body.encode('utf-8')),
+                text=body,
+            )
+            #if out == sys.stdout:   # option -a or -o -
+            #    out_str = out_str.encode('utf-8')
+            out.write(out_str)
+            out.write('\n')
+        elif options.write_json:
             json_data = {
                 'id': self.id,
                 'url': url,
@@ -855,7 +889,10 @@ class Extractor(object):
         cur = 0
         # look for matching {{...}}
         for s, e in findMatchingBraces(wikitext, 2):
-            res += wikitext[cur:s] + self.expandTemplate(wikitext[s + 2:e - 2])
+            try:
+                res += wikitext[cur:s] + self.expandTemplate(wikitext[s + 2:e - 2])
+            except TypeError:
+                res += wikitext[cur:s] + str(self.expandTemplate(wikitext[s + 2:e - 2]))
             cur = e
         # leftover
         res += wikitext[cur:]
@@ -2139,7 +2176,7 @@ def replaceInternalLinks(text):
                     pipe = last  # advance
                 curp = e1
             label = inner[pipe + 1:].strip()
-        res += text[cur:s] + makeInternalLink(title, label) + trail
+        res = "".join([res, text[cur:s], makeInternalLink(title, label) or "", trail])
         cur = end
     return res + text[cur:]
 
@@ -2418,8 +2455,11 @@ def makeInternalLink(title, label):
         colon2 = title.find(':', colon + 1)
         if colon2 > 1 and title[colon + 1:colon2] not in options.acceptedNamespaces:
             return ''
-    if options.keepLinks:
-        return '<a href="%s">%s</a>' % (quote(title.encode('utf-8')), label)
+    elif options.keepLinks:
+        if options.write_wikireader:
+            return f"[[{label}]]"
+        else:
+            return '<a href="%s">%s</a>' % (quote(title.encode('utf-8')), label)
     else:
         return label
 
@@ -2621,7 +2661,7 @@ def compact(text):
                     bullet = 'BULLET::::%d. ' % listCount[i - 1] if n == '#' else 'BULLET::::- '
                     page.append('{0:{1}s}'.format(bullet, len(listLevel)) + line)
                 elif options.toHTML:
-                    if n not in listItem: 
+                    if n not in listItem:
                         n = '*'
                     page.append(listItem[n] % line)
         elif len(listLevel):
@@ -3025,14 +3065,18 @@ def extract_process(opts, i, jobs_queue, output_queue):
         job = jobs_queue.get()  # job is (id, title, page, page_num)
         if job:
             id, revid, title, page, page_num = job
-            try:
-                e = Extractor(*job[:4]) # (id, revid, title, page)
-                page = None              # free memory
-                e.extract(out)
-                text = out.getvalue()
-            except:
-                text = ''
-                logging.exception('Processing page: %s %s', id, title)
+            if not title in seen_titles:
+                try:
+                    e = Extractor(*job[:4]) # (id, revid, title, page)
+                    page = None              # free memory
+                    e.extract(out)
+                    text = out.getvalue()
+                except:
+                    text = ''
+                    logging.exception('Processing page: %s %s', id, title)
+                seen_titles.add(title)
+            else:
+                logging.warning("Skipping duplicate title %s", title)
 
             output_queue.put((page_num, text))
             out.truncate(0)
@@ -3124,6 +3168,8 @@ def main():
                         help="compress output files using bzip")
     groupO.add_argument("--json", action="store_true",
                         help="write output in json format instead of the default one")
+    groupO.add_argument("--wikireader", action="store_true",
+                        help="write output in the wikireader format")
 
 
     groupP = parser.add_argument_group('Processing')
@@ -3179,6 +3225,7 @@ def main():
     options.keepLists = args.lists
     options.toHTML = args.html
     options.write_json = args.json
+    options.write_wikireader = args.wikireader
     options.print_revision = args.revision
     options.min_text_length = args.min_text_length
     if args.html:
