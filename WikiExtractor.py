@@ -70,7 +70,6 @@ import json
 from io import StringIO
 from multiprocessing import Queue, Process, Value, cpu_count
 from timeit import default_timer
-from jinja2 import Template
 
 # For wikireader output
 from jinja2 import Template
@@ -105,13 +104,13 @@ else:
 
 # XML_TEMPLATE is used to write wikimedia xml-like output for the wikireader
 XML_TEMPLATE = Template('''
-  <page>
+<page>
     <title>{{ title }}</title>
     <id>{{ id }}</id>
     <revision>
-      <text bytes="{{ bytes }}" xml:space="preserve">{{ text }}</text>
+        <text bytes="{{ bytes }}" xml:space="preserve">{{ text }}</text>
     </revision>
-  </page>''')
+</page>''')
 
 # ===========================================================================
 
