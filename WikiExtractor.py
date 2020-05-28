@@ -3064,19 +3064,20 @@ def extract_process(opts, i, jobs_queue, output_queue):
         job = jobs_queue.get()  # job is (id, title, page, page_num)
         if job:
             id, revid, title, page, page_num = job
-            if not title in seen_titles:
-                try:
-                    e = Extractor(*job[:4]) # (id, revid, title, page)
-                    page = None              # free memory
-                    e.extract(out)
-                    text = out.getvalue()
-                except:
-                    text = ''
-                    logging.exception('Processing page: %s %s', id, title)
-                seen_titles.add(title)
-            else:
-                logging.warning("Skipping duplicate title %s", title)
+            if title in seen_titles:
+                logging.warning("Skipping duplicate page: %s %s", id, title)
+                continue
 
+            try:
+                e = Extractor(*job[:4]) # (id, revid, title, page)
+                page = None              # free memory
+                e.extract(out)
+                text = out.getvalue()
+            except:
+                text = ''
+                logging.exception('Processing page: %s %s', id, title)
+
+            seen_titles.add(title)
             output_queue.put((page_num, text))
             out.truncate(0)
             out.seek(0)
